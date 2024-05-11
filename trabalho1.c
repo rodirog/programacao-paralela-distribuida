@@ -7,15 +7,31 @@
 #include <semaphore.h>
 #include <omp.h>
 
-#define NUM_SENSORES 4
+#define NUM_SENSORES 5
+#define NUM_ATUADORES 5
+#define NUM_UNIDADES_PROCES 8
+
+typedef struct Task {
+    int a, b;
+} Task;
 
 sem_t semEmpty;
 sem_t semFull;
 
 pthread_mutex_t mutexBuffer;
 
+pthread_mutex_t mutexQueue;
+pthread_cond_t condQueue;
+
 int dados_sensoriais[100];
 int count = 0;
+
+Task taskQueue[100];
+int taskCount = 0;
+
+// Tabela de atuadores
+int atuadores[NUM_ATUADORES];
+
 
 void* producer(void* args) {
     while (1) {
@@ -33,7 +49,52 @@ void* producer(void* args) {
     }
 }
 
+void executeTask(Task* task) {
+    usleep(50000);
+    int result = task->a + task->b;
+    printf("The sum of %d and %d is %d\n", task->a, task->b, result);
+}
+
+void submitTask(Task task) {
+    pthread_mutex_lock(&mutexQueue);
+    taskQueue[taskCount] = task;
+    taskCount++;
+    pthread_mutex_unlock(&mutexQueue);
+    pthread_cond_signal(&condQueue);
+}
+
+void* startThread(void* args) {
+    while (1) {
+        Task task;
+
+        pthread_mutex_lock(&mutexQueue);
+        while (taskCount == 0) {
+            pthread_cond_wait(&condQueue, &mutexQueue);
+        }
+
+        task = taskQueue[0];
+        int i;
+        for (i = 0; i < taskCount - 1; i++) {
+            taskQueue[i] = taskQueue[i + 1];
+        }
+        taskCount--;
+        pthread_mutex_unlock(&mutexQueue);
+        executeTask(&task);
+    }
+}
+
 void* consumer(void* args) {
+    pthread_t th[NUM_UNIDADES_PROCES];
+    pthread_mutex_init(&mutexQueue, NULL);
+    pthread_cond_init(&condQueue, NULL);
+
+    int i;
+    // Create task execution threads
+    for (i = 0; i < NUM_UNIDADES_PROCES; i++) {
+        if (pthread_create(&th[i], NULL, &startThread, NULL) != 0) {
+            perror("Failed to create the thread");
+        }
+    }
     while (1) {
         int y;
 
@@ -47,7 +108,28 @@ void* consumer(void* args) {
 
         // Consume
         printf("Got %d\n", y);
-    }
+
+        srand(time(NULL));
+        // Definir o atuador e o nível de atividade
+        int atuador = y % NUM_ATUADORES;
+        int nivel_atividade = rand() % 101; // valor aleatório entre 0 e 100
+        
+        Task t = {
+            .a = atuador,
+            .b = nivel_atividade
+        };
+        submitTask(t);
+
+        }
+
+    for (i = 0; i < NUM_UNIDADES_PROCES; i++) {
+            if (pthread_join(th[i], NULL) != 0) {
+                perror("Failed to join the thread");
+            }
+        }
+        
+    pthread_mutex_destroy(&mutexQueue);
+    pthread_cond_destroy(&condQueue);
 }
 
 int main(int argc, char* argv[]) {
@@ -59,6 +141,12 @@ int main(int argc, char* argv[]) {
     sem_init(&semFull, 0, 0);
 
     int i;
+
+        // Inicialização dos atuadores
+    for (i = 0; i < NUM_ATUADORES; i++) {
+        atuadores[i] = 0; // Inicializando todos os atuadores com atividade 0
+    }
+
     for (i = 0; i < NUM_SENSORES; i++) {
         
         if (pthread_create(&th[i], NULL, &producer, NULL) != 0) {
