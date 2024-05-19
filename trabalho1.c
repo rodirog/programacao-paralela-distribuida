@@ -7,7 +7,7 @@
 #include <semaphore.h>
 #include <omp.h>
 
-#define NUM_SENSORES 5
+#define NUM_SENSORES 4
 #define NUM_ATUADORES 5
 #define NUM_UNIDADES_PROCES 3
 
@@ -22,7 +22,8 @@ pthread_mutex_t mutexBuffer;
 
 pthread_mutex_t mutexQueue;
 pthread_cond_t condQueue;
-pthread_t mutexAtuadores;
+pthread_mutex_t mutexAtuadores;
+pthread_mutex_t mutexPrint;
 
 int dados_sensoriais[100];
 int count = 0;
@@ -52,14 +53,63 @@ void* producer(void* args) {
 
 void executeTask(Task* task, pthread_t thread_id) {
     usleep(50000);
-    // printf("The sum of %d and %d is %d\n", task->a, task->b);
 
-    // Modificar o valor do atuador e atualizar o array atuadores
-    pthread_mutex_lock(&mutexAtuadores); // Travar o mutex antes de modificar o array
-    atuadores[task->a] = task->b; // Atualizar o valor do atuador no array
-    pthread_mutex_unlock(&mutexAtuadores); // Destravar o mutex após modificar o array
+    int atuador = task->a;
+    int nivel = task->b;
 
-    printf("Thread ID: %lu\n Atuador: %d nivel: %d\n",thread_id, task->a, task->b);
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        // Erro ao criar o fork
+        perror("fork failed");
+        return;
+    }
+
+    if (pid == 0) {
+        // Processo filho: muda o nível do atuador
+        srand(time(NULL) ^ (getpid() << 16));
+        nivel = rand() % 101;
+        srand(time(NULL));
+        int waitTime = (rand() % 1000001) + 2000000;  // Entre 2000000 e 3000000 microsegundos (2s a 3s)
+        pthread_mutex_lock(&mutexAtuadores);
+        atuadores[atuador] = nivel;
+        
+        // Gera um tempo de espera aleatório entre 2 e 3 segundos
+        
+        usleep(waitTime);
+        pthread_mutex_unlock(&mutexAtuadores);
+        // 20% de chance de falha
+        int fail = rand() % 5 == 0;
+
+        // Retorna 1 em caso de falha, 0 em caso de sucesso
+        _exit(fail ? 1 : 0);
+    } else {
+        // Processo pai: envia a mudança ao painel
+
+        // Espera o processo filho terminar
+        int status;
+        waitpid(pid, &status, 0);
+
+        pthread_mutex_lock(&mutexPrint); 
+        printf("Alterando: %d com valor %d\n", atuador, nivel);
+
+        // Espera 1 segundo antes de prosseguir
+        usleep(1000000);
+        pthread_mutex_unlock(&mutexPrint);
+
+        // 20% de chance de falha
+        srand(time(NULL) ^ (getpid() << 16));
+        int fail = rand() % 5 == 0;
+
+        
+
+        int child_failed = WIFEXITED(status) && WEXITSTATUS(status) == 1;
+
+
+        if (fail || child_failed) {
+            printf("Falha: %d\n", atuador);
+        }
+    }
 }
 
 void submitTask(Task task) {
@@ -105,22 +155,22 @@ void* consumer(void* args) {
         }
     }
     while (1) {
-        int y;
+        int dado;
 
         // Remove from the buffer
         sem_wait(&semFull);
         pthread_mutex_lock(&mutexBuffer);
-        y = dados_sensoriais[count - 1];
+        dado = dados_sensoriais[count - 1];
         count--;
         pthread_mutex_unlock(&mutexBuffer);
         sem_post(&semEmpty);
 
         // Consume
-        printf("Got %d\n", y);
+        // printf("Got %d\n", y);
 
         // srand(time(NULL));
         // Definir o atuador e o nível de atividade
-        int atuador = y % NUM_ATUADORES;
+        int atuador = dado % NUM_ATUADORES;
         int nivel_atividade = rand() % 101; // valor aleatório entre 0 e 100
         
         Task t = {
@@ -148,6 +198,7 @@ int main(int argc, char* argv[]) {
     pthread_t mutexAtuadores;
     pthread_mutex_init(&mutexBuffer, NULL);
     pthread_mutex_init(&mutexAtuadores, NULL);
+    pthread_mutex_init(&mutexPrint, NULL);
     sem_init(&semEmpty, 0, 100);
     sem_init(&semFull, 0, 0);
 
@@ -183,6 +234,7 @@ int main(int argc, char* argv[]) {
     sem_destroy(&semFull);
     pthread_mutex_destroy(&mutexBuffer);
     pthread_mutex_destroy(&mutexAtuadores);
+    pthread_mutex_destroy(&mutexPrint);
 
     return 0;
 }
