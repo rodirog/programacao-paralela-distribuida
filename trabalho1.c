@@ -5,7 +5,6 @@
 #include <unistd.h>
 #include <time.h>
 #include <semaphore.h>
-#include <omp.h>
 
 #define NUM_SENSORES 4
 #define NUM_ATUADORES 5
@@ -31,8 +30,10 @@ int count = 0;
 Task taskQueue[100];
 int taskCount = 0;
 
+
 // Tabela de atuadores
 int atuadores[NUM_ATUADORES];
+
 
 
 void* producer(void* args) {
@@ -165,8 +166,8 @@ void* consumer(void* args) {
         pthread_mutex_unlock(&mutexBuffer);
         sem_post(&semEmpty);
 
-        // Consume
-        // printf("Got %d\n", y);
+        //Consume
+        printf("Got %d\n", dado);
 
         // srand(time(NULL));
         // Definir o atuador e o nível de atividade
@@ -193,6 +194,7 @@ void* consumer(void* args) {
 
 int main(int argc, char* argv[]) {
     srand(time(NULL));
+    
     pthread_t th[NUM_SENSORES];
     pthread_t th_consumer;
     pthread_t mutexAtuadores;
