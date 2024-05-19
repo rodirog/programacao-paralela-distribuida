@@ -12,7 +12,7 @@
 #define NUM_UNIDADES_PROCES 8
 
 typedef struct Task {
-    int a, b;
+    int atuador, nivel;
 } Task;
 
 sem_t semEmpty;
@@ -22,6 +22,7 @@ pthread_mutex_t mutexBuffer;
 
 pthread_mutex_t mutexQueue;
 pthread_cond_t condQueue;
+
 
 int dados_sensoriais[100];
 int count = 0;
@@ -50,9 +51,55 @@ void* producer(void* args) {
 }
 
 void executeTask(Task* task) {
-    usleep(50000);
-    int result = task->a + task->b;
-    printf("The sum of %d and %d is %d\n", task->a, task->b, result);
+
+    int atuador = task->atuador;
+    int nivel = task->nivel;
+
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        // Erro ao criar o fork
+        perror("fork failed");
+        return;
+    }
+
+    if (pid == 0) {
+        // Processo filho: muda o nível do atuador
+        srand(time(NULL) ^ (getpid() << 16));
+        nivel = rand() % 101;
+        atuadores[atuador] = nivel;
+        // Gera um tempo de espera aleatório entre 2 e 3 segundos
+        srand(time(NULL));
+        int waitTime = (rand() % 1000001) + 2000000;  // Entre 2000000 e 3000000 microsegundos (2s a 3s)
+        usleep(waitTime);
+
+        // 20% de chance de falha
+        int fail = rand() % 5 == 0;
+
+        // Retorna 1 em caso de falha, 0 em caso de sucesso
+        _exit(fail ? 1 : 0);
+    } else {
+        // Processo pai: envia a mudança ao painel
+        printf("Alterando: %d com valor %d\n", atuador, nivel);
+
+        // Espera 1 segundo antes de prosseguir
+        usleep(1000000);
+
+        // 20% de chance de falha
+        srand(time(NULL) ^ (getpid() << 16));
+        int fail = rand() % 5 == 0;
+
+        // Espera o processo filho terminar
+        int status;
+        waitpid(pid, &status, 0);
+
+        int child_failed = WIFEXITED(status) && WEXITSTATUS(status) == 1;
+
+
+        if (fail || child_failed) {
+            printf("Falha: %d\n", atuador);
+        }
+    }
 }
 
 void submitTask(Task task) {
@@ -115,8 +162,8 @@ void* consumer(void* args) {
         int nivel_atividade = rand() % 101; // valor aleatório entre 0 e 100
         
         Task t = {
-            .a = atuador,
-            .b = nivel_atividade
+            .atuador = atuador,
+            .nivel = nivel_atividade
         };
         submitTask(t);
 
@@ -137,6 +184,8 @@ int main(int argc, char* argv[]) {
     pthread_t th[NUM_SENSORES];
     pthread_t th_consumer;
     pthread_mutex_init(&mutexBuffer, NULL);
+    pthread_mutex_init(&printMutex, NULL);
+
     sem_init(&semEmpty, 0, 100);
     sem_init(&semFull, 0, 0);
 
