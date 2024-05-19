@@ -9,10 +9,10 @@
 
 #define NUM_SENSORES 5
 #define NUM_ATUADORES 5
-#define NUM_UNIDADES_PROCES 8
+#define NUM_UNIDADES_PROCES 3
 
 typedef struct Task {
-    int atuador, nivel;
+    int a, b;
 } Task;
 
 sem_t semEmpty;
@@ -22,7 +22,7 @@ pthread_mutex_t mutexBuffer;
 
 pthread_mutex_t mutexQueue;
 pthread_cond_t condQueue;
-
+pthread_t mutexAtuadores;
 
 int dados_sensoriais[100];
 int count = 0;
@@ -50,56 +50,16 @@ void* producer(void* args) {
     }
 }
 
-void executeTask(Task* task) {
+void executeTask(Task* task, pthread_t thread_id) {
+    usleep(50000);
+    // printf("The sum of %d and %d is %d\n", task->a, task->b);
 
-    int atuador = task->atuador;
-    int nivel = task->nivel;
+    // Modificar o valor do atuador e atualizar o array atuadores
+    pthread_mutex_lock(&mutexAtuadores); // Travar o mutex antes de modificar o array
+    atuadores[task->a] = task->b; // Atualizar o valor do atuador no array
+    pthread_mutex_unlock(&mutexAtuadores); // Destravar o mutex após modificar o array
 
-    pid_t pid = fork();
-
-    if (pid < 0) {
-        // Erro ao criar o fork
-        perror("fork failed");
-        return;
-    }
-
-    if (pid == 0) {
-        // Processo filho: muda o nível do atuador
-        srand(time(NULL) ^ (getpid() << 16));
-        nivel = rand() % 101;
-        atuadores[atuador] = nivel;
-        // Gera um tempo de espera aleatório entre 2 e 3 segundos
-        srand(time(NULL));
-        int waitTime = (rand() % 1000001) + 2000000;  // Entre 2000000 e 3000000 microsegundos (2s a 3s)
-        usleep(waitTime);
-
-        // 20% de chance de falha
-        int fail = rand() % 5 == 0;
-
-        // Retorna 1 em caso de falha, 0 em caso de sucesso
-        _exit(fail ? 1 : 0);
-    } else {
-        // Processo pai: envia a mudança ao painel
-        printf("Alterando: %d com valor %d\n", atuador, nivel);
-
-        // Espera 1 segundo antes de prosseguir
-        usleep(1000000);
-
-        // 20% de chance de falha
-        srand(time(NULL) ^ (getpid() << 16));
-        int fail = rand() % 5 == 0;
-
-        // Espera o processo filho terminar
-        int status;
-        waitpid(pid, &status, 0);
-
-        int child_failed = WIFEXITED(status) && WEXITSTATUS(status) == 1;
-
-
-        if (fail || child_failed) {
-            printf("Falha: %d\n", atuador);
-        }
-    }
+    printf("Thread ID: %lu\n Atuador: %d nivel: %d\n",thread_id, task->a, task->b);
 }
 
 void submitTask(Task task) {
@@ -112,6 +72,7 @@ void submitTask(Task task) {
 
 void* startThread(void* args) {
     while (1) {
+        pthread_t self = pthread_self();
         Task task;
 
         pthread_mutex_lock(&mutexQueue);
@@ -126,7 +87,7 @@ void* startThread(void* args) {
         }
         taskCount--;
         pthread_mutex_unlock(&mutexQueue);
-        executeTask(&task);
+        executeTask(&task, self);
     }
 }
 
@@ -134,6 +95,7 @@ void* consumer(void* args) {
     pthread_t th[NUM_UNIDADES_PROCES];
     pthread_mutex_init(&mutexQueue, NULL);
     pthread_cond_init(&condQueue, NULL);
+    srand(time(NULL));
 
     int i;
     // Create task execution threads
@@ -156,14 +118,14 @@ void* consumer(void* args) {
         // Consume
         printf("Got %d\n", y);
 
-        srand(time(NULL));
+        // srand(time(NULL));
         // Definir o atuador e o nível de atividade
         int atuador = y % NUM_ATUADORES;
         int nivel_atividade = rand() % 101; // valor aleatório entre 0 e 100
         
         Task t = {
-            .atuador = atuador,
-            .nivel = nivel_atividade
+            .a = atuador,
+            .b = nivel_atividade
         };
         submitTask(t);
 
@@ -183,9 +145,9 @@ int main(int argc, char* argv[]) {
     srand(time(NULL));
     pthread_t th[NUM_SENSORES];
     pthread_t th_consumer;
+    pthread_t mutexAtuadores;
     pthread_mutex_init(&mutexBuffer, NULL);
-    pthread_mutex_init(&printMutex, NULL);
-
+    pthread_mutex_init(&mutexAtuadores, NULL);
     sem_init(&semEmpty, 0, 100);
     sem_init(&semFull, 0, 0);
 
@@ -220,5 +182,7 @@ int main(int argc, char* argv[]) {
     sem_destroy(&semEmpty);
     sem_destroy(&semFull);
     pthread_mutex_destroy(&mutexBuffer);
+    pthread_mutex_destroy(&mutexAtuadores);
+
     return 0;
 }
